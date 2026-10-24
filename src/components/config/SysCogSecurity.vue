@@ -1007,6 +1007,9 @@ methods: {
                 settings.auth.admin._clear = true;
                 settings.auth.admin.adminPassword = '';
             }
+            // 匿名访问开关始终随请求提交(与凭证清除解耦,避免被后端默认值覆盖)
+            settings.auth.user.allowAnonymousUpload = this.authSettings.user.allowAnonymousUpload !== false;
+            settings.auth.admin.allowAnonymousDelete = this.authSettings.admin.allowAnonymousDelete !== false;
 
             return fetchWithAuth('/api/manage/sysConfig/security', {
                 method: 'POST',
