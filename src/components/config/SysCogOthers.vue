@@ -2,6 +2,17 @@
     <div class="others-settings" v-loading="loading">
         <!-- 一级设置：其他设置 -->
         <div class="first-settings">
+            <h3 class="first-title">内容去重
+                <el-tooltip content="开启后,上传时计算文件 SHA-256,重复内容直接返回已有链接(秒传),不再重复存储。自部署(docker)默认开启,Workers 默认关闭" placement="right" raw-content>
+                    <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                </el-tooltip>
+            </h3>
+            <el-form label-width="120px">
+                <el-form-item label="启用去重">
+                    <el-switch v-model="dedupEnabled" @change="saveDedupSetting"></el-switch>
+                    <span class="dedup-tip">{{ dedupStatus }}</span>
+                </el-form-item>
+            </el-form>
             <h3 class="first-title">索引维护
                 <el-tooltip content="以存储渠道的真实对象为准清理幽灵索引记录;并可对存量文件做内容去重清理" placement="right" raw-content>
                     <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
@@ -144,6 +155,7 @@ components: {
 },
 data() {
     return {
+            dedupEnabled: false,
             pruneLoading: false,
             pruneStatus: '',
             dedupLoading: false,
@@ -185,6 +197,23 @@ methods: {
             confirmButtonText: '关闭',
         }).catch(() => {});
         return summary;
+    },
+    async saveDedupSetting(value) {
+        this.dedupStatus = '保存中…';
+        try {
+            const resp = await fetchWithAuth('/api/manage/sysConfig/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dedup: { enabled: value === true } })
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            this.dedupStatus = value ? '已开启' : '已关闭';
+            this.$message.success(value ? '内容去重已开启' : '内容去重已关闭');
+        } catch (e) {
+            this.dedupStatus = '保存失败';
+            this.$message.error('去重设置保存失败');
+            this.dedupEnabled = !value;
+        }
     },
     async pruneGhosts(dryRun) {
         this.pruneLoading = true;
@@ -252,7 +281,13 @@ methods: {
 },
 mounted() {
     this.loading = true;
-    // 获取上传设置
+    // 去重开关状态在 upload 设置里
+    fetchWithAuth('/api/manage/sysConfig/upload')
+    .then(r => r.json())
+    .then(data => {
+        this.dedupEnabled = data?.dedup?.enabled === true;
+    }).catch(() => {});
+    // 获取其它设置
     fetchWithAuth('/api/manage/sysConfig/others')
     .then((response) => response.json())
     .then(async (data) => {
