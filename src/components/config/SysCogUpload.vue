@@ -22,6 +22,19 @@
             </div>
         </div>
 
+        <!-- 内容去重开关 -->
+        <div class="channel-group">
+            <div class="group-header">
+                <div class="group-title">
+                    <span>内容去重</span>
+                    <el-tooltip content="开启后,上传时计算文件 SHA-256,重复内容直接返回已有链接(秒传),不再重复存储。自部署(docker)默认开启,Workers 默认关闭" placement="right" raw-content>
+                        <font-awesome-icon icon="question-circle" class="help-icon"/>
+                    </el-tooltip>
+                </div>
+                <el-switch v-model="dedupEnabled" @change="saveDedupSetting"></el-switch>
+            </div>
+        </div>
+
         <!-- 渠道卡片列表 - 按类型分组 -->
         <div v-for="channelType in filteredChannels" :key="channelType.value" class="channel-group">
             <div class="group-header">
@@ -622,6 +635,7 @@ components: {
 },
 data() {
     return {
+    dedupEnabled: false,
     // 渠道类型筛选
     channelFilter: '',
     // 渠道类型列表
@@ -765,6 +779,20 @@ computed: {
     }
 },
 methods: {
+    async saveDedupSetting(value) {
+        try {
+            const response = await fetchWithAuth('/api/manage/sysConfig/upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dedup: { enabled: value === true } })
+            });
+            if (!response.ok) throw new Error();
+            this.$message.success(value ? '内容去重已开启' : '内容去重已关闭');
+        } catch {
+            this.$message.error('保存失败');
+            this.dedupEnabled = !value;
+        }
+    },
     // 卡片光斑跟随鼠标
     handleCardMouseMove(event, channelType, index) {
         const card = event.currentTarget;
@@ -1218,6 +1246,7 @@ mounted() {
     fetchWithAuth('/api/manage/sysConfig/upload')
     .then((response) => response.json())
     .then((data) => {
+        this.dedupEnabled = data?.dedup?.enabled === true;
         this.telegramSettings = data.telegram;
         // 确保 R2 渠道有 quota 默认值
         if (data.cfr2 && data.cfr2.channels) {

@@ -24,6 +24,10 @@
                         <el-input v-model="authSettings.user.confirmNewUserPassword" type="password" show-password autocomplete="new-password"/>
                     </el-form-item>
                 </transition>
+                <el-form-item label="允许匿名上传">
+                    <el-switch v-model="authSettings.user.allowAnonymousUpload" active-text="允许" inactive-text="拒绝"/>
+                    <span class="anon-tip">关闭后,上传必须携带 Access Token 或登录,即使未设置上传密码</span>
+                </el-form-item>
             </el-form>
             
             <h4 class="second-title">{{ $t('sysSecurity.adminAuth') }}</h4>
@@ -49,6 +53,10 @@
                         <el-input v-model="authSettings.admin.confirmNewAdminPassword" type="password" show-password autocomplete="new-password"/>
                     </el-form-item>
                 </transition>
+                <el-form-item label="允许匿名删除">
+                    <el-switch v-model="authSettings.admin.allowAnonymousDelete" active-text="允许" inactive-text="拒绝"/>
+                    <span class="anon-tip">关闭后,删除等管理操作必须管理员登录,即使未设置管理员账号</span>
+                </el-form-item>
             </el-form>
 
             <h4 class="second-title token-title">{{ $t('sysSecurity.apiTokenManagement') }}
@@ -1061,6 +1069,13 @@ mounted() {
     .then((response) => response.json())
     .then(async (data) => {
         this.authSettings = data.auth;
+        // 匿名访问开关(后端默认 true;旧配置无此字段时补默认)
+        if (this.authSettings.user && this.authSettings.user.allowAnonymousUpload === undefined) {
+            this.$set(this.authSettings.user, 'allowAnonymousUpload', true);
+        }
+        if (this.authSettings.admin && this.authSettings.admin.allowAnonymousDelete === undefined) {
+            this.$set(this.authSettings.admin, 'allowAnonymousDelete', true);
+        }
         this.uploadSettings = this.normalizeIpQuerySettings(data.upload);
         this.accessSettings = {
             imageTransformEnabled: false,
@@ -1410,5 +1425,10 @@ html.dark .token-table :deep(.el-table__row:hover td) {
     background-color: var(--dialog-bg-color);
     border: 1px solid var(--glass-border);
     box-shadow: var(--dialog-box-shadow);
+}
+.anon-tip {
+    margin-left: 12px;
+    font-size: 12px;
+    color: #909399;
 }
 </style>

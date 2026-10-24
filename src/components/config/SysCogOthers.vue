@@ -2,6 +2,23 @@
     <div class="others-settings" v-loading="loading">
         <!-- 一级设置：其他设置 -->
         <div class="first-settings">
+            <h3 class="first-title">索引维护
+                <el-tooltip content="以存储渠道的真实对象为准清理幽灵索引记录;并可对存量文件做内容去重清理" placement="right" raw-content>
+                    <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                </el-tooltip>
+            </h3>
+            <el-form label-width="120px">
+                <el-form-item label="幽灵索引清理">
+                    <el-button type="warning" plain @click="pruneGhosts(true)">预览报告</el-button>
+                    <el-button type="danger" plain @click="pruneGhosts(false)">执行清理</el-button>
+                    <span class="dedup-tip">{{ pruneStatus }}</span>
+                </el-form-item>
+                <el-form-item label="存量内容去重">
+                    <el-button type="warning" plain @click="dedupExisting(true)">预览报告</el-button>
+                    <el-button type="danger" plain @click="dedupExisting(false)">执行去重</el-button>
+                    <span class="dedup-tip">{{ dedupStatus }}</span>
+                </el-form-item>
+            </el-form>
             <h3 class="first-title">{{ $t('sysOthers.remoteTelemetry') }}
                 <el-tooltip :content="$t('sysOthers.remoteTelemetryTooltip')" placement="right">
                     <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
@@ -116,6 +133,7 @@
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+
 import FloatingSaveButton from '@/components/FloatingSaveButton.vue';
 import unsavedSettings from '@/mixins/unsavedSettings';
 
@@ -126,6 +144,10 @@ components: {
 },
 data() {
     return {
+            pruneLoading: false,
+            pruneStatus: '',
+            dedupLoading: false,
+            dedupStatus: '',
         settings: {
             telemetry: {},
             randomImageAPI: {},
@@ -156,6 +178,46 @@ watch: {
     }
 },
 methods: {
+    showReport(title, data) {
+        const summary = `扫描 ${data.scanned ?? '-'} / 渠道对象 ${data.realObjects ?? '-'} / 幽灵 ${data.ghosts ?? '-'} / 补录 ${data.addedMissing?.length ?? '-'} / 删除 ${data.deleted?.length ?? '-'}`;
+        this.$alert(`<pre style="max-height:400px;overflow:auto;font-size:12px;">${JSON.stringify(data, null, 2)}</pre>`, title, {
+            dangerouslyUseHTMLString: true,
+            confirmButtonText: '关闭',
+        }).catch(() => {});
+        return summary;
+    },
+    async pruneGhosts(dryRun) {
+        this.pruneLoading = true;
+        this.pruneStatus = dryRun ? '扫描中…' : '清理中…';
+        try {
+            const resp = await fetchWithAuth(`/api/manage/dedup/prune-ghosts${dryRun ? '?dryRun=true' : ''}`, { method: 'POST' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this.pruneStatus = this.showReport('幽灵索引清理报告', data);
+            if (!dryRun) this.$message.success(`清理完成:删除 ${data.deleted?.length ?? 0} 条幽灵记录`);
+        } catch (e) {
+            this.pruneStatus = '失败: ' + (e.message || e);
+            this.$message.error('幽灵索引清理失败');
+        } finally {
+            this.pruneLoading = false;
+        }
+    },
+    async dedupExisting(dryRun) {
+        this.dedupLoading = true;
+        this.dedupStatus = dryRun ? '扫描中…' : '去重中…';
+        try {
+            const resp = await fetchWithAuth(`/api/manage/dedup/cleanup${dryRun ? '?dryRun=true' : ''}`, { method: 'POST' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this.dedupStatus = this.showReport('存量内容去重报告', data);
+            if (!dryRun) this.$message.success(`去重完成:删除 ${data.deleted?.length ?? 0} 个重复副本`);
+        } catch (e) {
+            this.dedupStatus = '失败: ' + (e.message || e);
+            this.$message.error('存量去重失败');
+        } finally {
+            this.dedupLoading = false;
+        }
+    },
     async saveSettings() {
         if (this.saving) return;
         const submitted = JSON.parse(JSON.stringify(this.settings));
@@ -293,5 +355,10 @@ mounted() {
     .first-settings :deep(.el-form-item__content) {
         max-width: 100%;
     }
+}
+.dedup-tip {
+    margin-left: 12px;
+    font-size: 12px;
+    color: #909399;
 }
 </style>
