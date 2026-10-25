@@ -27,7 +27,7 @@
                 <el-form-item label="存量内容去重">
                     <el-button type="warning" plain @click="dedupExisting(true)">预览报告</el-button>
                     <el-button type="danger" plain @click="dedupExisting(false)">执行去重</el-button>
-                    <span class="dedup-tip">{{ dedupStatus }}</span>
+                    <span class="dedup-tip">{{ dedupCleanStatus }}</span>
                 </el-form-item>
             </el-form>
             <h3 class="first-title">{{ $t('sysOthers.remoteTelemetry') }}
@@ -160,6 +160,7 @@ data() {
             pruneStatus: '',
             dedupLoading: false,
             dedupStatus: '',
+            dedupCleanStatus: '',
         settings: {
             telemetry: {},
             randomImageAPI: {},
@@ -222,7 +223,7 @@ methods: {
             const resp = await fetchWithAuth(`/api/manage/dedup/prune-ghosts${dryRun ? '?dryRun=true' : ''}`, { method: 'POST' });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
-            this.pruneStatus = this.showReport('幽灵索引清理报告', data);
+            this.pruneStatus = `幽灵 ${data.ghosts ?? 0} / 删除 ${data.deleted?.length ?? 0} / 补录 ${data.addedMissing?.length ?? 0}`;
             if (!dryRun) this.$message.success(`清理完成:删除 ${data.deleted?.length ?? 0} 条幽灵记录`);
         } catch (e) {
             this.pruneStatus = '失败: ' + (e.message || e);
@@ -233,15 +234,15 @@ methods: {
     },
     async dedupExisting(dryRun) {
         this.dedupLoading = true;
-        this.dedupStatus = dryRun ? '扫描中…' : '去重中…';
+        this.dedupCleanStatus = dryRun ? '扫描中…' : '去重中…';
         try {
             const resp = await fetchWithAuth(`/api/manage/dedup/cleanup${dryRun ? '?dryRun=true' : ''}`, { method: 'POST' });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
-            this.dedupStatus = this.showReport('存量内容去重报告', data);
+            this.dedupCleanStatus = `重复组 ${data.duplicateGroups?.length ?? 0} / 删除 ${data.deleted?.length ?? 0}`;
             if (!dryRun) this.$message.success(`去重完成:删除 ${data.deleted?.length ?? 0} 个重复副本`);
         } catch (e) {
-            this.dedupStatus = '失败: ' + (e.message || e);
+            this.dedupCleanStatus = '失败: ' + (e.message || e);
             this.$message.error('存量去重失败');
         } finally {
             this.dedupLoading = false;
