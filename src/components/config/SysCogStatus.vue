@@ -219,7 +219,42 @@
                 {{ processingProgress.current.toLocaleString() }}
                 <template v-if="processingProgress.total > 0">
                   / {{ processingProgress.total.toLocaleString() }}
-                </template>
+                
+    <!-- 重复内容扫描报告(只读) -->
+    <el-dialog
+            title="重复内容扫描报告"
+            :visible.sync="dupScanVisible"
+            width="70%"
+            append-to-body
+    >
+      <div v-if="dupScanReport">
+        <p style="margin: 0 0 12px;">
+          共扫描 <b>{{ dupScanReport.scanned }}</b> 个文件,
+          重复分组 <b>{{ dupScanReport.duplicateGroups.length }}</b> 个,
+          冗余副本 <b>{{ dupScanReport.redundantCopies }}</b> 个
+          <span v-if="dupScanReport.readErrors">,读取失败 {{ dupScanReport.readErrors }} 个</span>。
+          本扫描只读,不会删除文件;处理请自行判断。
+          <em style="color:#909399;">(仅 Docker / Node.js 服务端部署支持)</em>
+        </p>
+        <el-empty v-if="dupScanReport.duplicateGroups.length === 0" description="未发现重复内容"/>
+        <div v-for="group in dupScanReport.duplicateGroups" :key="group.sha256" style="margin-bottom: 16px;">
+          <div style="font-size: 12px; color: #909399; margin-bottom: 4px;">sha256: {{ group.sha256 }} ({{ group.count }} 份)</div>
+          <el-table :data="[group.keep, ...group.duplicates]" size="mini" border>
+            <el-table-column label="角色" width="80">
+              <template #default="scope">
+                <el-tag v-if="scope.$index === 0" type="success" size="mini">建议保留</el-tag>
+                <el-tag v-else type="danger" size="mini">重复</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="id" label="文件 ID"/>
+            <el-table-column prop="name" label="文件名" width="220"/>
+            <el-table-column prop="channel" label="渠道" width="120"/>
+          </el-table>
+        </div>
+      </div>
+    </el-dialog>
+
+</template>
                 {{ $t('sysStatus.records') }}
               </span>
               <!-- 预计剩余时间 -->
@@ -277,6 +312,48 @@
           
           <!-- 操作按钮 -->
           <div v-else class="action-buttons">
+            <el-tooltip content="幽灵索引清理:以存储渠道真实对象为准清理索引残留" placement="top">
+              <el-button
+                type="danger"
+                plain
+                :loading="ghostPruneLoading"
+                :disabled="isProcessing"
+                @click="pruneGhosts"
+                class="action-btn"
+              >
+                <font-awesome-icon icon="broom" />
+                幽灵索引清理
+              </el-button>
+            </el-tooltip>
+
+            <el-tooltip content="存量内容去重:按内容分组清理重复副本,每组保留最早一份" placement="top">
+              <el-button
+                type="warning"
+                plain
+                :loading="dedupCleanLoading"
+                :disabled="isProcessing"
+                @click="dedupExisting"
+                class="action-btn"
+              >
+                <font-awesome-icon icon="compress" />
+                存量内容去重
+              </el-button>
+            </el-tooltip>
+
+            <el-tooltip content="重复内容扫描:按内容分组列出重复文件(只读,不删除)。仅 Docker / Node.js 服务端部署支持" placement="top">
+              <el-button
+                type="warning"
+                plain
+                :loading="dupScanLoading"
+                :disabled="isProcessing"
+                @click="scanDuplicates"
+                class="action-btn dedup-scan-btn"
+              >
+                <font-awesome-icon icon="clone" />
+                {{ dupScanLoading ? '扫描中...' : '重复内容扫描' }}
+              </el-button>
+            </el-tooltip>
+
             <el-tooltip :content="$t('sysStatus.rebuildTooltip')" placement="top">
               <el-button 
                 type="primary" 
@@ -451,6 +528,11 @@ export default {
     return {
       loading: false,
       rebuilding: false,
+      dupScanLoading: false,
+      ghostPruneLoading: false,
+      dedupCleanLoading: false,
+      dupScanVisible: false,
+      dupScanReport: null,
       backing: false,
       restoring: false,
       indexInfo: {},
@@ -830,6 +912,59 @@ export default {
     }
   },
   methods: {
+    showReport(title, data) {
+        this.$alert(`<pre style="max-height:420px;overflow:auto;font-size:12px;">${JSON.stringify(data, null, 2)}</pre>`, title, {
+            dangerouslyUseHTMLString: true,
+            confirmButtonText: '关闭',
+        }).catch(() => {});
+    },
+    async pruneGhosts() {
+        this.ghostPruneLoading = true;
+        try {
+            const resp = await fetchWithAuth('/api/manage/dedup/prune-ghosts', { method: 'POST' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this.showReport('幽灵索引清理报告', data);
+            this.$message.success(`清理完成:删除 ${data.deleted?.length ?? 0} 条幽灵记录,补录 ${data.addedMissing?.length ?? 0} 条`);
+        } catch (e) {
+            this.$message.error('幽灵索引清理失败: ' + (e.message || e));
+        } finally {
+            this.ghostPruneLoading = false;
+        }
+    },
+    async dedupExisting() {
+        this.dedupCleanLoading = true;
+        try {
+            const resp = await fetchWithAuth('/api/manage/dedup/cleanup', { method: 'POST' });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this.showReport('存量内容去重报告', data);
+            this.$message.success(`去重完成:删除 ${data.deleted?.length ?? 0} 个重复副本`);
+        } catch (e) {
+            this.$message.error('存量内容去重失败: ' + (e.message || e));
+        } finally {
+            this.dedupCleanLoading = false;
+        }
+    },
+    async scanDuplicates() {
+        this.dupScanLoading = true;
+        try {
+            const response = await fetchWithAuth('/api/manage/dedup/scan', { method: 'POST' });
+            const body = await response.json().catch(() => ({}));
+            if (response.status === 501) {
+                this.$message.warning('重复内容扫描仅支持 Docker / Node.js 服务端部署,Workers / Pages 暂不支持');
+                return;
+            }
+            if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+            this.dupScanReport = body;
+            this.dupScanVisible = true;
+        } catch (e) {
+            this.$message.error('重复内容扫描失败: ' + (e.message || e));
+        } finally {
+            this.dupScanLoading = false;
+        }
+    },
+
     prepareClockFont() {
       if (!document.fonts?.load) {
         this.clockVisible = true
