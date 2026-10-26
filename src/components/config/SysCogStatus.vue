@@ -305,18 +305,20 @@
               </el-button>
             </el-tooltip>
 
-            <el-tooltip content="重复内容扫描:按内容分组列出重复文件(只读,不删除)。仅 Docker / Node.js 服务端部署支持" placement="top">
-              <el-button
-                type="warning"
-                plain
-                :loading="dupScanLoading"
-                :disabled="isProcessing"
-                @click="scanDuplicates"
-                class="action-btn dedup-scan-btn"
-              >
-                <font-awesome-icon icon="clone" />
-                {{ dupScanLoading ? '扫描中...' : '重复内容扫描' }}
-              </el-button>
+            <el-tooltip :content="dupScanSupported ? $t('sysStatus.dupScanTooltip') : $t('sysStatus.dupScanUnsupportedTooltip')" placement="top">
+              <span class="dup-scan-trigger">
+                <el-button
+                  type="warning"
+                  plain
+                  :loading="dupScanLoading"
+                  :disabled="isProcessing || !dupScanSupported"
+                  @click="scanDuplicates"
+                  class="action-btn dedup-scan-btn"
+                >
+                  <font-awesome-icon icon="clone" />
+                  {{ dupScanLoading ? $t('sysStatus.dupScanScanning') : $t('sysStatus.dupScan') }}
+                </el-button>
+              </span>
             </el-tooltip>
 
             <el-tooltip :content="$t('sysStatus.rebuildTooltip')" placement="top">
@@ -453,32 +455,35 @@
     <!-- 重复内容扫描报告(只读) -->
     <el-dialog
       v-model="dupScanVisible"
-      title="重复内容扫描报告"
+      :title="$t('sysStatus.dupScanReportTitle')"
       width="70%"
       append-to-body
     >
       <div v-if="dupScanReport">
         <p style="margin: 0 0 12px;">
-          共扫描 <b>{{ dupScanReport.scanned }}</b> 个文件,
-          重复分组 <b>{{ dupScanReport.duplicateGroups.length }}</b> 个,
-          冗余副本 <b>{{ dupScanReport.redundantCopies }}</b> 个
-          <span v-if="dupScanReport.readErrors.length">,读取失败 {{ dupScanReport.readErrors.length }} 个</span>。
-          本扫描只读,不会删除文件;处理请自行判断。
-          <em style="color:#909399;">(仅 Docker / Node.js 服务端部署支持)</em>
+          {{ $t('sysStatus.dupScanSummary', { scanned: dupScanReport.scanned, groups: dupScanReport.duplicateGroups.length, redundant: dupScanReport.redundantCopies }) }}<span v-if="dupScanReport.readErrors.length">{{ $t('sysStatus.dupScanReadErrors', { count: dupScanReport.readErrors.length }) }}</span>{{ $t('sysStatus.dupScanNotice') }}
+          <em style="color:#909399;">{{ $t('sysStatus.dupScanServerOnly') }}</em>
         </p>
-        <el-empty v-if="dupScanReport.duplicateGroups.length === 0" description="未发现重复内容"/>
+        <p v-if="dupScanReport.complete === false || dupScanReport.recordErrors.length || dupScanReport.skippedOversized.length" style="margin: 0 0 12px; color:#e6a23c;">
+          {{ $t('sysStatus.dupScanIncomplete', {
+            chunks: dupScanReport.chunkErrors.length,
+            records: dupScanReport.recordErrors.length,
+            skipped: dupScanReport.skippedOversized.length
+          }) }}<span v-if="dupScanReport.timedOut">{{ $t('sysStatus.dupScanTimedOut') }}</span>
+        </p>
+        <el-empty v-if="dupScanReport.duplicateGroups.length === 0" :description="$t('sysStatus.dupScanNone')"/>
         <div v-for="group in dupScanReport.duplicateGroups" :key="group.sha256" style="margin-bottom: 16px;">
-          <div style="font-size: 12px; color: #909399; margin-bottom: 4px;">sha256: {{ group.sha256 }} ({{ group.count }} 份)</div>
-          <el-table :data="[group.keep, ...group.duplicates]" size="small" border>
-            <el-table-column label="角色" width="80">
+          <div style="font-size: 12px; color: #909399; margin-bottom: 4px;">sha256: {{ group.sha256 }} {{ $t('sysStatus.dupScanCount', { count: group.count }) }}</div>
+          <el-table :data="[group.keep, ...(group.duplicates || [])]" size="small" border>
+            <el-table-column :label="$t('sysStatus.dupScanRole')" width="80">
               <template #default="scope">
-                <el-tag v-if="scope.$index === 0" type="success" size="small">建议保留</el-tag>
-                <el-tag v-else type="danger" size="small">重复</el-tag>
+                <el-tag v-if="scope.$index === 0" type="success" size="small">{{ $t('sysStatus.dupScanKeep') }}</el-tag>
+                <el-tag v-else type="danger" size="small">{{ $t('sysStatus.dupScanDuplicate') }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="id" label="文件 ID"/>
-            <el-table-column prop="name" label="文件名" width="220"/>
-            <el-table-column prop="channel" label="渠道" width="120"/>
+            <el-table-column prop="id" :label="$t('sysStatus.dupScanFileId')"/>
+            <el-table-column prop="name" :label="$t('sysStatus.dupScanFileName')" width="220"/>
+            <el-table-column prop="channel" :label="$t('sysStatus.dupScanChannel')" width="120"/>
           </el-table>
         </div>
       </div>
@@ -530,6 +535,7 @@ export default {
       dupScanLoading: false,
       ghostPruneLoading: false,
       dedupCleanLoading: false,
+      dupScanSupported: true,
       dupScanVisible: false,
       dupScanReport: null,
       backing: false,
@@ -898,6 +904,7 @@ export default {
   },
   mounted() {
     this.fetchIndexInfo()
+    this.checkScanCapability()
     this.prepareClockFont()
     this.clockTimer = window.setInterval(() => {
       this.currentTime = new Date()
@@ -945,20 +952,41 @@ export default {
             this.dedupCleanLoading = false;
         }
     },
+    async checkScanCapability() {
+        // 与后端统一部署判定:仅 501(或 supported:false)判定为不支持;
+        // 网络错/401/旧后端 404 等其余失败不锁定入口(POST 的 501 分支仍会兜底)
+        try {
+            const resp = await fetchWithAuth('/api/manage/dedup/scan', { method: 'GET' });
+            if (resp.status === 501) {
+                this.dupScanSupported = false;
+            } else if (resp.ok) {
+                this.dupScanSupported = true;
+            }
+        } catch (e) {
+            // 探测失败不改状态,保留默认可用;真实扫描失败另有错误链
+        }
+    },
     async scanDuplicates() {
         this.dupScanLoading = true;
         try {
             const response = await fetchWithAuth('/api/manage/dedup/scan', { method: 'POST' });
             const body = await response.json().catch(() => ({}));
             if (response.status === 501) {
-                this.$message.warning('重复内容扫描仅支持 Docker / Node.js 服务端部署,Workers / Pages 暂不支持');
+                this.dupScanSupported = false;
+                this.$message.warning(this.$t('sysStatus.dupScanUnsupported'));
                 return;
             }
             if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+            // 归一化:缺字段的响应(版本错配/代理兜底)不至渲染崩溃
+            if (!Array.isArray(body.duplicateGroups)) throw new Error('unexpected scan response shape');
+            body.readErrors = Array.isArray(body.readErrors) ? body.readErrors : [];
+            body.recordErrors = Array.isArray(body.recordErrors) ? body.recordErrors : [];
+            body.chunkErrors = Array.isArray(body.chunkErrors) ? body.chunkErrors : [];
+            body.skippedOversized = Array.isArray(body.skippedOversized) ? body.skippedOversized : [];
             this.dupScanReport = body;
             this.dupScanVisible = true;
         } catch (e) {
-            this.$message.error('重复内容扫描失败: ' + (e.message || e));
+            this.$message.error(this.$t('sysStatus.dupScanFailed') + ': ' + (e.message || e));
         } finally {
             this.dupScanLoading = false;
         }
@@ -2161,8 +2189,14 @@ html.dark .legend-item:hover {
   box-shadow: none;
 }
 
+/* 禁用按钮不派发鼠标事件,tooltip 需挂在外层 span 上才能在禁用态说明原因 */
+.dup-scan-trigger {
+  display: inline-flex;
+}
+
 @media (max-width: 768px) {
-  .action-btn {
+  .action-btn,
+  .action-buttons > .dup-scan-trigger {
     flex: 1;
     width: auto;
     min-width: 0;
@@ -2258,6 +2292,7 @@ html.dark .legend-item:hover {
 
 @media (max-width: 768px) {
   .action-buttons > .el-tooltip,
+  .action-buttons > .dup-scan-trigger,
   .action-buttons > .restore-section,
   .restore-section {
     flex: 1;
