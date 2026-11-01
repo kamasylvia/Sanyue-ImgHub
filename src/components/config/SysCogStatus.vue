@@ -305,20 +305,6 @@
               </el-button>
             </el-tooltip>
 
-            <el-tooltip content="重复内容扫描:按内容分组列出重复文件(只读,不删除)。仅 Docker / Node.js 服务端部署支持" placement="top">
-              <el-button
-                type="warning"
-                plain
-                :loading="dupScanLoading"
-                :disabled="isProcessing"
-                @click="scanDuplicates"
-                class="action-btn dedup-scan-btn"
-              >
-                <font-awesome-icon icon="clone" />
-                {{ dupScanLoading ? '扫描中...' : '重复内容扫描' }}
-              </el-button>
-            </el-tooltip>
-
             <el-tooltip :content="$t('sysStatus.rebuildTooltip')" placement="top">
               <el-button 
                 type="primary" 
@@ -380,6 +366,20 @@
                   {{ dupScanLoading ? $t('sysStatus.dupScanScanning') : $t('sysStatus.dupScan') }}
                 </el-button>
               </span>
+            </el-tooltip>
+
+            <el-tooltip :content="$t('sysStatus.refRegTooltip')" placement="top">
+              <el-button
+                type="info"
+                plain
+                :loading="refRegLoading"
+                :disabled="isProcessing || dupScanLoading || dupScanDeletingId !== null"
+                @click="openReferenceRegistry"
+                class="action-btn ref-reg-btn"
+              >
+                <font-awesome-icon icon="link" />
+                {{ $t('sysStatus.refReg') }}
+              </el-button>
             </el-tooltip>
           </div>
         </div>
@@ -529,6 +529,67 @@
         </div>
       </div>
     </el-dialog>
+
+    <!-- 引用登记(fork):源快照状态 + 孤儿文件报告(只读) -->
+    <el-dialog
+      v-model="refRegVisible"
+      :title="$t('sysStatus.refRegTitle')"
+      width="min(1100px, 94vw)"
+      align-center
+      append-to-body
+    >
+      <div class="ref-reg-report">
+        <p class="ref-reg-summary">
+          {{ $t('sysStatus.refRegSummary', { total: refRegReport?.totalFiles ?? 0, referenced: refRegReport?.referencedCount ?? 0, orphans: refRegReport?.orphanCount ?? 0 }) }}
+          <el-tooltip placement="top">
+            <template #content>
+              <ul class="tooltip-help-list">
+                <li>{{ $t('sysStatus.refRegTipSources') }}</li>
+                <li>{{ $t('sysStatus.refRegTipStale') }}</li>
+                <li>{{ $t('sysStatus.refRegTipOrphans') }}</li>
+                <li>{{ $t('sysStatus.refRegTipManual') }}</li>
+              </ul>
+            </template>
+            <font-awesome-icon icon="question-circle" class="inline-help-icon"/>
+          </el-tooltip>
+        </p>
+        <p v-if="refRegReport && refRegReport.complete === false" class="ref-reg-incomplete">
+          {{ $t('sysStatus.refRegIncomplete') }}
+          <span v-if="refRegReport.chunkErrors.length"> {{ $t('sysStatus.dupScanChunkErrors', { count: refRegReport.chunkErrors.length }) }}</span>
+          <span v-if="refRegReport.recordErrors.length"> {{ $t('sysStatus.dupScanRecordErrors', { count: refRegReport.recordErrors.length }) }}</span>
+          <span v-if="refRegReport.timedOut"> {{ $t('sysStatus.dupScanTimedOut') }}</span>
+          <span v-if="refRegReport.indexChanged"> {{ $t('sysStatus.dupScanIndexChanged') }}</span>
+        </p>
+        <h4 class="ref-reg-section-title">{{ $t('sysStatus.refRegSourcesTitle') }}</h4>
+        <el-table :data="refRegReport?.sources || []" size="small" border class="ref-reg-table">
+          <el-table-column prop="name" :label="$t('sysStatus.refRegSource')" min-width="140"/>
+          <el-table-column :label="$t('sysStatus.refRegUpdatedAt')" min-width="170">
+            <template #default="scope">{{ formatTime(scope.row.updatedAt) }}</template>
+          </el-table-column>
+          <el-table-column prop="count" :label="$t('sysStatus.refRegUrlCount')" width="110" align="center"/>
+          <el-table-column :label="$t('sysStatus.refRegStale')" width="130" align="center">
+            <template #default="scope">
+              <el-tag v-if="scope.row.staleDays !== null && scope.row.staleDays >= 3" type="warning" size="small">{{ $t('sysStatus.refRegStaleDays', { count: scope.row.staleDays }) }}</el-tag>
+              <el-tag v-else type="success" size="small">{{ $t('sysStatus.refRegFresh') }}</el-tag>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="refRegReport && (refRegReport.sources || []).length === 0" :description="$t('sysStatus.refRegNoSources')" :image-size="60"/>
+        <h4 class="ref-reg-section-title">{{ $t('sysStatus.refRegOrphansTitle') }}</h4>
+        <el-empty v-if="refRegReport && refRegReport.orphanCount === 0" :description="$t('sysStatus.refRegNoOrphans')" :image-size="60"/>
+        <template v-if="refRegReport && refRegReport.orphanCount > 0">
+          <p class="ref-reg-omitted" v-if="refRegReport.omitted > 0">{{ $t('sysStatus.refRegOmitted', { shown: (refRegReport.orphans || []).length, count: refRegReport.orphanCount }) }}</p>
+          <el-table :data="refRegReport?.orphans || []" size="small" border class="ref-reg-table">
+            <el-table-column prop="id" :label="$t('sysStatus.dupScanFileId')" min-width="240" show-overflow-tooltip/>
+            <el-table-column prop="name" :label="$t('sysStatus.dupScanFileName')" min-width="180" show-overflow-tooltip/>
+            <el-table-column prop="channel" :label="$t('sysStatus.dupScanChannel')" width="140" show-overflow-tooltip/>
+            <el-table-column :label="$t('sysStatus.refRegUploaded')" width="170">
+              <template #default="scope">{{ formatTime(scope.row.timestamp) }}</template>
+            </el-table-column>
+          </el-table>
+        </template>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -579,6 +640,9 @@ export default {
       dupScanVisible: false,
       dupScanReport: null,
       dupScanDeletingId: null,
+      refRegLoading: false,
+      refRegVisible: false,
+      refRegReport: null,
       backing: false,
       restoring: false,
       indexInfo: {},
@@ -972,6 +1036,20 @@ export default {
             }
         } catch (e) {
             // 探测失败不改状态,保留默认可用;真实扫描失败另有错误链
+        }
+    },
+    async openReferenceRegistry() {
+        this.refRegLoading = true;
+        try {
+            const resp = await fetchWithAuth('/api/manage/references/orphans?limit=1000');
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+            this.refRegReport = body;
+            this.refRegVisible = true;
+        } catch (e) {
+            this.$message.error(this.$t('sysStatus.refRegFailed') + ': ' + (e.message || e));
+        } finally {
+            this.refRegLoading = false;
         }
     },
     async scanDuplicates() {
@@ -2358,6 +2436,40 @@ html.dark .legend-item:hover {
   background: var(--el-fill-color-blank);
   border-color: var(--el-border-color-lighter);
   color: #2563EB;
+}
+
+.ref-reg-btn {
+  background: var(--el-fill-color-blank);
+  border-color: var(--el-border-color-lighter);
+}
+
+.ref-reg-report {
+  font-size: 13px;
+}
+
+.ref-reg-summary {
+  margin: 0 0 12px;
+}
+
+.ref-reg-incomplete {
+  margin: 0 0 12px;
+  color: var(--el-color-warning);
+}
+
+.ref-reg-section-title {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ref-reg-table {
+  width: 100%;
+}
+
+.ref-reg-omitted {
+  margin: 0 0 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 .rebuild-btn:hover,
