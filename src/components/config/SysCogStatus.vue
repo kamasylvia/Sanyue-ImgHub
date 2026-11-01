@@ -539,7 +539,7 @@
       append-to-body
     >
       <div class="ref-reg-report">
-        <p class="ref-reg-summary">
+        <p v-if="!refRegReport?.noSources" class="ref-reg-summary">
           {{ $t('sysStatus.refRegSummary', { total: refRegReport?.totalFiles ?? 0, referenced: refRegReport?.referencedCount ?? 0, orphans: refRegReport?.orphanCount ?? 0 }) }}
           <el-tooltip placement="top">
             <template #content>
