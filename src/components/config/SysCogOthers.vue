@@ -147,7 +147,6 @@ import fetchWithAuth from '@/utils/fetchWithAuth';
 
 import FloatingSaveButton from '@/components/FloatingSaveButton.vue';
 import unsavedSettings from '@/mixins/unsavedSettings';
-
 export default {
 mixins: [unsavedSettings],
 components: {
@@ -288,7 +287,7 @@ mounted() {
     .then(data => {
         this.dedupEnabled = data?.dedup?.enabled === true;
     }).catch(() => {});
-    // 获取其它设置
+    // 获取其他设置
     fetchWithAuth('/api/manage/sysConfig/others')
     .then((response) => response.json())
     .then(async (data) => {
