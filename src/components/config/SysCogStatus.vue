@@ -576,7 +576,8 @@
         </el-table>
         <el-empty v-if="refRegReport && (refRegReport.sources || []).length === 0" :description="$t('sysStatus.refRegNoSources')" :image-size="60"/>
         <h4 class="ref-reg-section-title">{{ $t('sysStatus.refRegOrphansTitle') }}</h4>
-        <el-empty v-if="refRegReport && refRegReport.orphanCount === 0" :description="$t('sysStatus.refRegNoOrphans')" :image-size="60"/>
+        <el-empty v-if="refRegReport && refRegReport.noSources" :description="$t('sysStatus.refRegNoSources')" :image-size="60"/>
+        <el-empty v-else-if="refRegReport && refRegReport.orphanCount === 0" :description="$t('sysStatus.refRegNoOrphans')" :image-size="60"/>
         <template v-if="refRegReport && refRegReport.orphanCount > 0">
           <p class="ref-reg-omitted" v-if="refRegReport.omitted > 0">{{ $t('sysStatus.refRegOmitted', { shown: (refRegReport.orphans || []).length, count: refRegReport.orphanCount }) }}</p>
           <el-table :data="refRegReport?.orphans || []" size="small" border class="ref-reg-table">
